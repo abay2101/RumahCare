@@ -1,0 +1,15 @@
+# Environment dan kredensial lokal
+.env
+.env.*
+
+# Log dan file sementara
+*.log
+*.tmp
+
+# Pengaturan lokal VS Code
+.vscode/
+
+# File sistem operasi
+.DS_Store
+Thumbs.db
+desktop.ini
