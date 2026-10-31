@@ -1,6 +1,17 @@
 <?php
 require_once __DIR__ . '/includes/auth.php';
 require_login();
+
+if (($_SESSION['role'] ?? '') === 'petugas') {
+    header('Location: teknisi.php');
+    exit;
+}
+if (($_SESSION['role'] ?? '') === 'pelanggan') {
+    header('Location: portal_pelanggan.php');
+    exit;
+}
+
+require_role('admin');
 require_once __DIR__ . '/config/database.php';
 
 if (empty($_SESSION['csrf_token'])) {

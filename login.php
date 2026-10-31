@@ -3,7 +3,8 @@ require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 
 if (!empty($_SESSION['user_id'])) {
-    header('Location: dashboard.php');
+    $role = $_SESSION['role'] ?? '';
+    header('Location: ' . ($role === 'petugas' ? 'teknisi.php' : ($role === 'pelanggan' ? 'portal_pelanggan.php' : 'dashboard.php')));
     exit;
 }
 
@@ -49,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($email !== '' && $password !== '') {
             $stmt = $pdo->prepare(
-                'SELECT id_pengguna, nama, email, password_hash, role
+                'SELECT id_pengguna, nama, email, password_hash, role, id_petugas, id_pelanggan
                  FROM pengguna
                  WHERE email = ?
                  LIMIT 1'
@@ -68,11 +69,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['user_name'] = $user['nama'];
                 $_SESSION['user_email'] = $user['email'];
                 $_SESSION['role'] = $user['role'];
+                $_SESSION['id_petugas'] = $user['id_petugas'] !== null
+                    ? (int) $user['id_petugas']
+                    : null;
+                $_SESSION['id_pelanggan'] = $user['id_pelanggan'] !== null
+                    ? (int) $user['id_pelanggan']
+                    : null;
 
                 unset($_SESSION['login_attempts']);
                 $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 
-                header('Location: dashboard.php');
+                header('Location: ' . ($user['role'] === 'petugas' ? 'teknisi.php' : ($user['role'] === 'pelanggan' ? 'portal_pelanggan.php' : 'dashboard.php')));
                 exit;
             }
         }

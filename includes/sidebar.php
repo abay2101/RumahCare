@@ -1,9 +1,10 @@
 <?php
 // includes/sidebar.php
-// Set $activePage before including this file: dashboard, pelanggan, layanan, or pesanan.
+// Set $activePage before including this file to mark the current section.
 $activePage = $activePage ?? '';
 $sidebarName = $_SESSION['user_name'] ?? 'Pengguna';
 $sidebarRole = $_SESSION['role'] ?? '';
+$isTechnician = $sidebarRole === 'petugas';
 ?>
 <aside class="sidebar" id="appSidebar">
     <div class="sidebar-top">
@@ -16,8 +17,26 @@ $sidebarRole = $_SESSION['role'] ?? '';
             </button>
         </div>
 
-        <div class="workspace-label">WORKSPACE</div>
+        <div class="workspace-label"><?= $isTechnician ? 'PORTAL TEKNISI' : 'WORKSPACE' ?></div>
         <nav class="sidebar-nav" aria-label="Navigasi utama">
+            <?php if (($_SESSION['role'] ?? '') === 'pelanggan'): ?>
+            <a class="nav-item <?= $activePage === 'portal_pelanggan' ? 'active' : '' ?>" href="portal_pelanggan.php" title="Pesanan Saya">
+                <span class="nav-icon">▣</span><span class="nav-label">Pesanan Saya</span>
+            </a>
+            <?php elseif ($isTechnician): ?>
+            <a class="nav-item <?= $activePage === 'dashboard' ? 'active' : '' ?>"
+               href="teknisi.php" title="Dashboard">
+                <span class="nav-icon">⌂</span><span class="nav-label">Dashboard</span>
+            </a>
+            <a class="nav-item <?= $activePage === 'pekerjaan' ? 'active' : '' ?>"
+               href="teknisi.php#daftar-pekerjaan" title="Pekerjaan Saya">
+                <span class="nav-icon">▣</span><span class="nav-label">Pekerjaan Saya</span>
+            </a>
+            <a class="nav-item <?= $activePage === 'riwayat_pekerjaan' ? 'active' : '' ?>"
+               href="riwayat_pekerjaan.php" title="Riwayat Pekerjaan">
+                <span class="nav-icon">◷</span><span class="nav-label">Riwayat Pekerjaan</span>
+            </a>
+            <?php else: ?>
             <a class="nav-item <?= $activePage === 'dashboard' ? 'active' : '' ?>"
                href="dashboard.php" title="Dashboard">
                 <span class="nav-icon">⌂</span><span class="nav-label">Dashboard</span>
@@ -34,6 +53,19 @@ $sidebarRole = $_SESSION['role'] ?? '';
                href="pesanan.php" title="Pesanan">
                 <span class="nav-icon">▣</span><span class="nav-label">Pesanan</span>
             </a>
+            <a class="nav-item <?= $activePage === 'pembayaran' ? 'active' : '' ?>"
+               href="pembayaran.php" title="Pembayaran">
+                <span class="nav-icon">Rp</span><span class="nav-label">Pembayaran</span>
+            </a>
+            <a class="nav-item <?= $activePage === 'jadwal' ? 'active' : '' ?>"
+               href="jadwal.php" title="Jadwal">
+                <span class="nav-icon">▦</span><span class="nav-label">Jadwal</span>
+            </a>
+            <a class="nav-item <?= $activePage === 'teknisi_admin' ? 'active' : '' ?>"
+               href="data_teknisi.php" title="Teknisi">
+                <span class="nav-icon">♟</span><span class="nav-label">Teknisi</span>
+            </a>
+            <?php endif; ?>
         </nav>
     </div>
 

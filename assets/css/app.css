@@ -119,6 +119,47 @@ td strong { color: #18231f; }
 .quick-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
 .placeholder { margin-top: 24px; padding: 28px; background: #fff; border: 1px solid var(--border); border-radius: 11px; }
 .placeholder h2 { margin-top: 0; }
+.muted { color: var(--muted); font-size: 12px; }
+.field select, .toolbar select { min-height: 40px; padding: 9px 11px; border: 1px solid #d8e0dc; border-radius: 8px; color: #37453f; background: #fff; font: inherit; }
+.approval-check { flex-direction: row; align-items: flex-start; font-weight: 500; line-height: 1.5; }
+.approval-check input { width: 16px; height: 16px; flex: 0 0 16px; margin: 1px 0 0; accent-color: var(--green); }
+.toolbar select { font-size: 13px; }
+.status-pill { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: 20px; color: #105f3c; background: #e7f4ed; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.technician-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.technician-jobs { margin-top: 24px; }
+.technician-jobs .panel-header { padding: 20px 22px 17px; }
+.technician-job-list { padding: 0 20px; }
+.technician-job { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 18px 0; border-top: 1px solid #edf1ef; }
+.job-date { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border-radius: 9px; color: var(--green-dark); background: var(--green-soft); font-size: 12px; }
+.job-info { min-width: 0; }
+.job-info > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.job-info h3 { margin: 8px 0 5px; font-size: 14px; }
+.job-info p { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.job-detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 310px; align-items: start; gap: 18px; margin-top: 20px; }
+.job-detail-card, .status-update-card { margin-top: 0; }
+.job-detail-card .panel-header { position: relative; padding-right: 150px; }
+.job-detail-card .panel-header h2 { margin-top: 7px; }
+.job-order-id { margin: 0; color: var(--green); font-size: 12px; font-weight: 700; }
+.job-detail-card .status-pill { position: absolute; top: 24px; right: 22px; }
+.job-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 20px 22px; }
+.job-detail-grid section { min-width: 0; padding: 5px 14px 17px 0; }
+.job-detail-grid section:nth-child(2) { padding-left: 22px; border-left: 1px solid var(--border); }
+.job-detail-grid .job-location { grid-column: 1 / -1; padding: 18px 0 0; border-top: 1px solid var(--border); }
+.job-detail-grid h3 { margin: 0 0 13px; font-size: 13px; font-weight: 600; }
+.job-detail-grid dl { display: grid; grid-template-columns: minmax(95px, .6fr) 1fr; gap: 10px; margin: 0; font-size: 12px; }
+.job-detail-grid dt { color: var(--muted); }
+.job-detail-grid dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.job-detail-grid dd + dt { margin-top: 8px; }
+.status-update-card form { padding: 20px; }
+.status-update-card .form-actions { padding: 18px 0 0; }
+.status-update-card button:disabled { opacity: .55; cursor: not-allowed; }
+.job-closed-body { padding: 20px; }
+.job-closed-body .muted { margin-bottom: 0; line-height: 1.5; }
+.customer-order-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.customer-orders { margin-top: 22px; }
+.customer-order-tabs { display: flex; gap: 9px; padding: 14px 17px; border-bottom: 1px solid var(--border); }
+.customer-order-table td { line-height: 1.55; }
+.customer-status-cancelled { color: #8d3030; background: #faeaea; }
 .sidebar-backdrop { display: none; }
 
 /* Split-screen / narrow desktop: keep navigation visible as icons. */
@@ -156,7 +197,27 @@ td strong { color: #18231f; }
     .page-header { min-height: 90px; }
     .page-header h1 { font-size: 20px; }
     .dashboard-grid { grid-template-columns: 1fr; }
+    .technician-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .customer-order-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .form-grid { grid-template-columns: 1fr; }
     .field.full { grid-column: auto; }
+    .technician-job { grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
+    .technician-job > .btn { grid-column: 2; justify-self: start; }
+    .job-detail-layout { grid-template-columns: 1fr; }
+    .job-detail-grid { grid-template-columns: 1fr; }
+    .job-detail-grid section:nth-child(2) { padding: 15px 0; border-left: 0; border-top: 1px solid var(--border); }
+    .job-detail-grid .job-location { grid-column: auto; }
+    .search-form { flex-wrap: wrap; }
+    .search-form input { width: 100%; }
     body { min-width: 0; }
+}
+
+@media (max-width: 600px) {
+    .customer-order-stats { grid-template-columns: 1fr; }
+    .customer-order-tabs { flex-wrap: wrap; }
+}
+
+@media (min-width: 601px) and (max-width: 900px) {
+    .technician-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .job-detail-layout { grid-template-columns: minmax(0, 1fr) 270px; gap: 14px; }
 }

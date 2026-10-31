@@ -1,8 +1,7 @@
 <?php
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
-
-require_login();
+require_role('admin');
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -22,6 +21,7 @@ function redirect_pesanan(string $url): never
 $error = '';
 $success = '';
 $action = $_GET['action'] ?? 'list';
+$archiveView = ($_GET['arsip'] ?? '') === '1' && $action === 'list';
 $id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 
 $form = [
@@ -46,40 +46,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $postAction = $_POST['action'] ?? '';
 
-    // HAPUS PESANAN. Detail ikut dihapus dalam transaksi; jika pesanan masih
-    // terhubung ke jadwal/pembayaran, seluruh transaksi dibatalkan.
-    if ($postAction === 'delete') {
-        $deleteId = filter_input(INPUT_POST, 'id_pesanan', FILTER_VALIDATE_INT);
-
-        if (!$deleteId || $deleteId < 1) {
-            $error = 'ID pesanan tidak valid.';
+    // Arsip hanya disembunyikan; relasi jadwal, pembayaran, dan riwayat tetap utuh.
+    if ($postAction === 'hide_archive') {
+        $rawIds = $_POST['id_pesanan'] ?? [];
+        $archiveIds = [];
+        if (is_array($rawIds)) {
+            foreach ($rawIds as $rawArchiveId) {
+                $parsedId = filter_var((string)$rawArchiveId, FILTER_VALIDATE_INT);
+                if ($parsedId && $parsedId > 0) $archiveIds[] = (int)$parsedId;
+            }
+        }
+        $archiveIds = array_values(array_unique($archiveIds));
+        if (!$archiveIds) {
+            $error = 'Pilih minimal satu pesanan untuk dikeluarkan dari arsip.';
+            $archiveView = true;
         } else {
             try {
                 $pdo->beginTransaction();
-
-                $stmt = $pdo->prepare('DELETE FROM detail_pesanan WHERE id_pesanan = ?');
-                $stmt->execute([$deleteId]);
-
-                $stmt = $pdo->prepare('DELETE FROM pesanan WHERE id_pesanan = ?');
-                $stmt->execute([$deleteId]);
-
+                $placeholders = implode(',', array_fill(0, count($archiveIds), '?'));
+                $stmt = $pdo->prepare("UPDATE pesanan SET dihapus_dari_arsip = 1 WHERE id_pesanan IN ($placeholders) AND status_pekerjaan IN ('Selesai', 'Dibatalkan') AND dihapus_dari_arsip = 0");
+                $stmt->execute($archiveIds);
                 $pdo->commit();
-                redirect_pesanan('pesanan.php?deleted=1');
-            } catch (PDOException $e) {
-                if ($pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-                error_log($e->getMessage());
-                $error = 'Pesanan tidak dapat dihapus karena masih memiliki data terkait, seperti jadwal atau pembayaran.';
+                redirect_pesanan('pesanan.php?arsip=1&hidden=1');
             } catch (Throwable $e) {
-                if ($pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
+                if ($pdo->inTransaction()) $pdo->rollBack();
                 error_log($e->getMessage());
-                $error = 'Terjadi kesalahan saat menghapus pesanan.';
+                $error = 'Pesanan gagal dikeluarkan dari arsip.';
+                $archiveView = true;
             }
         }
-
         $action = 'list';
     }
 
@@ -114,7 +109,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $date = DateTime::createFromFormat('!Y-m-d\\TH:i', $form['waktu_layanan']);
         $validDate = $date && $date->format('Y-m-d\\TH:i') === $form['waktu_layanan'];
 
-        if (!$customerId || $customerId < 1) {
+        if ($formId) {
+            $check = $pdo->prepare('SELECT status_pekerjaan FROM pesanan WHERE id_pesanan = ?');
+            $check->execute([$formId]);
+            $currentOrder = $check->fetch(PDO::FETCH_ASSOC);
+            if (!$currentOrder || in_array($currentOrder['status_pekerjaan'], ['Selesai', 'Dibatalkan'], true)) {
+                $error = 'Pesanan selesai atau dibatalkan tidak dapat diedit.';
+            }
+        }
+
+        if ($error !== '') {
+            // Penolakan status terminal di atas mencegah perubahan data.
+        } elseif (!$customerId || $customerId < 1) {
             $error = 'Pilih pelanggan yang valid.';
         } elseif (count($selectedServiceIds) < 1) {
             $error = 'Pilih minimal satu layanan.';
@@ -176,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $savedOrderId = (int)$pdo->lastInsertId();
                 } else {
                     // Pastikan pesanan yang diedit ada.
-                    $stmt = $pdo->prepare('SELECT id_pesanan FROM pesanan WHERE id_pesanan = ?');
+                    $stmt = $pdo->prepare("SELECT id_pesanan FROM pesanan WHERE id_pesanan = ? AND status_pekerjaan NOT IN ('Selesai', 'Dibatalkan')");
                     $stmt->execute([$formId]);
                     if (!$stmt->fetch()) {
                         throw new RuntimeException('Pesanan yang akan diedit tidak ditemukan.');
@@ -210,8 +216,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $insertDetail->execute([$savedOrderId, $serviceId, $pricesById[$serviceId]]);
                 }
 
+                $stmt = $pdo->prepare(
+                    "UPDATE pesanan
+                     SET waktu_status_akhir = CASE
+                         WHEN status_pekerjaan IN ('Selesai', 'Dibatalkan') THEN COALESCE(waktu_status_akhir, NOW())
+                         ELSE NULL
+                     END
+                     WHERE id_pesanan = ?"
+                );
+                $stmt->execute([$savedOrderId]);
+
+                // Status jadwal mengikuti status pekerjaan pada pesanan.
+                if ($formId !== null) {
+                    $scheduleStatusByOrder = [
+                        'Dijadwalkan' => 'Terjadwal',
+                        'Diproses' => 'Berlangsung',
+                        'Selesai' => 'Selesai',
+                        'Dibatalkan' => 'Dibatalkan',
+                    ];
+                    $stmt = $pdo->prepare('UPDATE jadwal SET status_jadwal = ? WHERE id_pesanan = ?');
+                    $stmt->execute([$scheduleStatusByOrder[$form['status_pekerjaan']], $savedOrderId]);
+                }
+
                 $pdo->commit();
-                redirect_pesanan('pesanan.php?saved=1');
+                redirect_pesanan('pesanan.php' . (in_array($form['status_pekerjaan'], ['Selesai', 'Dibatalkan'], true) ? '?arsip=1&saved=1' : '?saved=1'));
             } catch (RuntimeException $e) {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
@@ -253,6 +281,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' && in_array($action, ['create', 'edit'
             exit('Pesanan tidak ditemukan.');
         }
 
+        if (in_array($existing['status_pekerjaan'], ['Selesai', 'Dibatalkan'], true)) {
+            redirect_pesanan('pesanan.php?arsip=1');
+        }
+
         $form = $existing;
         $form['waktu_layanan'] = date('Y-m-d\\TH:i', strtotime($existing['waktu_layanan']));
 
@@ -263,9 +295,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' && in_array($action, ['create', 'edit'
 }
 
 if (isset($_GET['saved'])) {
-    $success = 'Pesanan berhasil disimpan.';
-} elseif (isset($_GET['deleted'])) {
-    $success = 'Pesanan berhasil dihapus.';
+    $success = $archiveView
+        ? 'Pesanan berhasil disimpan dan masuk ke arsip status.'
+        : 'Pesanan berhasil disimpan.';
+} elseif (isset($_GET['hidden'])) {
+    $success = 'Pesanan dikeluarkan dari arsip. Jadwal dan pembayaran tetap tersimpan.';
 }
 
 // Ambil pelanggan dan layanan untuk form.
@@ -279,6 +313,7 @@ $services = $pdo->query(
 
 // Daftar pesanan: GROUP_CONCAT menampilkan banyak layanan dalam satu baris.
 $search = trim((string)($_GET['q'] ?? ''));
+$statusFilter = $_GET['status'] ?? '';
 $orders = [];
 
 if ($action === 'list') {
@@ -287,6 +322,7 @@ if ($action === 'list') {
             ps.id_pesanan,
             ps.alamat_layanan,
             ps.waktu_layanan,
+            ps.waktu_status_akhir,
             ps.total_biaya,
             ps.status_pekerjaan,
             p.nama AS nama_pelanggan,
@@ -297,30 +333,33 @@ if ($action === 'list') {
         JOIN layanan l ON dp.id_layanan = l.id_layanan
     ';
 
+    $conditions = $archiveView
+        ? "ps.status_pekerjaan IN ('Selesai', 'Dibatalkan') AND ps.dihapus_dari_arsip = 0"
+        : "ps.status_pekerjaan NOT IN ('Selesai', 'Dibatalkan') AND ps.dihapus_dari_arsip = 0";
+    $params = [];
+    if ($archiveView && in_array($statusFilter, ['Selesai', 'Dibatalkan'], true)) {
+        $conditions .= ' AND ps.status_pekerjaan = ?';
+        $params[] = $statusFilter;
+    }
     if ($search !== '') {
-        $stmt = $pdo->prepare(
-            $sql . '
-            WHERE p.nama LIKE ? OR EXISTS (
+        $conditions .= ' AND (p.nama LIKE ? OR EXISTS (
                 SELECT 1
                 FROM detail_pesanan dp2
                 JOIN layanan l2 ON l2.id_layanan = dp2.id_layanan
                 WHERE dp2.id_pesanan = ps.id_pesanan
                   AND l2.nama_layanan LIKE ?
-            )
-            GROUP BY ps.id_pesanan, ps.alamat_layanan, ps.waktu_layanan,
-                     ps.total_biaya, ps.status_pekerjaan, p.nama
-            ORDER BY ps.id_pesanan DESC'
-        );
+            ))';
         $term = '%' . $search . '%';
-        $stmt->execute([$term, $term]);
-    } else {
-        $stmt = $pdo->query(
-            $sql . '
-            GROUP BY ps.id_pesanan, ps.alamat_layanan, ps.waktu_layanan,
-                     ps.total_biaya, ps.status_pekerjaan, p.nama
-            ORDER BY ps.id_pesanan DESC'
-        );
+        $params[] = $term;
+        $params[] = $term;
     }
+    $stmt = $pdo->prepare(
+        $sql . "\nWHERE $conditions
+        GROUP BY ps.id_pesanan, ps.alamat_layanan, ps.waktu_layanan,
+                 ps.waktu_status_akhir, ps.total_biaya, ps.status_pekerjaan, p.nama
+        ORDER BY ps.id_pesanan DESC"
+    );
+    $stmt->execute($params);
     $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
@@ -394,6 +433,11 @@ $activePage = 'pesanan';
             line-height: 1.3;
         }
         .service-total { font-weight: 700; }
+        .archive-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .archive-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .archive-controls select { min-height:38px; padding:0 10px; border:1px solid #dce4df; border-radius:8px; background:#fff; }
+        .select-col, .select-cell { width:38px; text-align:center; }
+        .select-col input, .select-cell input { width:16px; height:16px; accent-color:#16804b; }
         @media (max-width: 1050px) {
             .service-option { flex-basis: calc((100% - 16px) / 3); }
         }
@@ -414,8 +458,13 @@ $activePage = 'pesanan';
                 <p class="breadcrumb">RumahCare / Operasional</p>
                 <h1>Data Pesanan</h1>
             </div>
-            <?php if ($action === 'list'): ?>
+            <?php if ($action === 'list' && $archiveView): ?>
+                <a class="btn btn-secondary" href="pesanan.php">← Kembali</a>
+            <?php elseif ($action === 'list'): ?>
+                <div class="archive-actions">
+                    <a class="btn btn-secondary" href="pesanan.php?arsip=1">Selesai / Batal</a>
                 <a class="btn btn-primary" href="pesanan.php?action=create">＋ Tambah Pesanan</a>
+                </div>
             <?php endif; ?>
         </header>
 
@@ -430,7 +479,7 @@ $activePage = 'pesanan';
                     <p>Pilih pelanggan dan satu atau beberapa layanan untuk satu kunjungan.</p>
                 </div>
 
-                <form method="post" action="pesanan.php">
+                <form method="post" action="pesanan.php" data-order-form data-initial-status="<?= h($form['status_pekerjaan'] ?? 'Dijadwalkan') ?>">
                     <input type="hidden" name="action" value="save">
                     <input type="hidden" name="csrf_token" value="<?= h($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="id_pesanan" value="<?= h($form['id_pesanan'] ?? '') ?>">
@@ -526,32 +575,66 @@ $activePage = 'pesanan';
                     const option = customerSelect.options[customerSelect.selectedIndex];
                     serviceAddress.value = option && option.value ? (option.dataset.address || '') : '';
                 });
+                const orderForm = document.querySelector('[data-order-form]');
+                orderForm.addEventListener('submit', (event) => {
+                    const statusSelect = orderForm.querySelector('[name="status_pekerjaan"]');
+                    const nextStatus = statusSelect.value;
+                    const oldStatus = orderForm.dataset.initialStatus;
+                    if (nextStatus !== oldStatus && ['Selesai', 'Dibatalkan'].includes(nextStatus)) {
+                        const confirmed = confirm(`Konfirmasi status pesanan menjadi ${nextStatus}? Setelah disimpan, pesanan masuk ke arsip dan tidak dapat diedit.`);
+                        if (!confirmed) event.preventDefault();
+                    }
+                });
             </script>
         <?php else: ?>
             <section class="table-panel">
                 <div class="toolbar">
                     <form class="search-form" method="get" action="pesanan.php">
+                        <?php if ($archiveView): ?><input type="hidden" name="arsip" value="1"><?php endif; ?>
                         <input type="search" name="q" value="<?= h($search) ?>" placeholder="Cari pelanggan atau layanan...">
                         <button class="btn btn-secondary" type="submit">Cari</button>
-                        <?php if ($search !== ''): ?><a class="btn btn-secondary" href="pesanan.php">Reset</a><?php endif; ?>
+                        <?php if ($search !== '' || $statusFilter !== ''): ?><a class="btn btn-secondary" href="pesanan.php<?= $archiveView ? '?arsip=1' : '' ?>">Reset</a><?php endif; ?>
                     </form>
+                    <?php if ($archiveView): ?>
+                        <div class="archive-controls">
+                            <form method="get" action="pesanan.php">
+                                <input type="hidden" name="arsip" value="1">
+                                <?php if ($search !== ''): ?><input type="hidden" name="q" value="<?= h($search) ?>"><?php endif; ?>
+                                <select name="status" aria-label="Filter status" onchange="this.form.submit()">
+                                    <option value="" <?= $statusFilter === '' ? 'selected' : '' ?>>Semua status</option>
+                                    <option value="Selesai" <?= $statusFilter === 'Selesai' ? 'selected' : '' ?>>Selesai</option>
+                                    <option value="Dibatalkan" <?= $statusFilter === 'Dibatalkan' ? 'selected' : '' ?>>Dibatalkan</option>
+                                </select>
+                            </form>
+                            <button class="btn btn-secondary" type="button" id="toggleSelection">Pilih untuk dihapus</button>
+                        </div>
+                    <?php endif; ?>
                     <span class="result-count"><?= count($orders) ?> data</span>
                 </div>
 
+                <?php if ($archiveView): ?>
+                <form method="post" action="pesanan.php?arsip=1" id="archiveForm">
+                    <input type="hidden" name="action" value="hide_archive">
+                    <input type="hidden" name="csrf_token" value="<?= h($_SESSION['csrf_token']) ?>">
+                <?php endif; ?>
                 <div class="table-scroll">
                     <table>
                         <thead>
                             <tr>
-                                <th>No.</th><th>Pelanggan</th><th>Layanan</th><th>Jadwal</th><th>Total Biaya</th><th>Status</th><th>Aksi</th>
+                                <?php if ($archiveView): ?><th class="select-col selection-column" hidden><input type="checkbox" id="selectAll" aria-label="Pilih semua"></th><?php endif; ?>
+                                <th>No.</th><th>Pelanggan</th><th>Layanan</th><th>Jadwal</th>
+                                <?php if ($archiveView): ?><th>Waktu selesai/batal</th><?php endif; ?>
+                                <th>Total Biaya</th><th>Status</th><?php if (!$archiveView): ?><th>Aksi</th><?php endif; ?>
                             </tr>
                         </thead>
                         <tbody>
                         <?php if (!$orders): ?>
-                            <tr><td colspan="7" class="empty">Belum ada pesanan atau hasil pencarian tidak ditemukan.</td></tr>
+                            <tr><td colspan="<?= $archiveView ? 8 : 7 ?>" class="empty">Belum ada pesanan atau hasil pencarian tidak ditemukan.</td></tr>
                         <?php else: ?>
                             <?php $nomor = 1; ?>
                             <?php foreach ($orders as $order): ?>
                                 <tr>
+                                    <?php if ($archiveView): ?><td class="select-cell selection-column" hidden><input type="checkbox" name="id_pesanan[]" value="<?= (int)$order['id_pesanan'] ?>" aria-label="Pilih pesanan <?= (int)$order['id_pesanan'] ?>"></td><?php endif; ?>
                                     <td><?= $nomor++ ?></td>
                                     <td><strong><?= h($order['nama_pelanggan']) ?></strong></td>
                                     <td><?= h($order['nama_layanan'] ?? '-') ?></td>
@@ -559,27 +642,57 @@ $activePage = 'pesanan';
                                         <?= h(date('d-m-Y H:i', strtotime($order['waktu_layanan']))) ?><br>
                                         <span style="color:#6f7c76"><?= h($order['alamat_layanan']) ?></span>
                                     </td>
+                                    <?php if ($archiveView): ?>
+                                        <td><?= $order['waktu_status_akhir'] ? h(date('d-m-Y H:i', strtotime($order['waktu_status_akhir']))) : '—' ?></td>
+                                    <?php endif; ?>
                                     <td class="price">Rp <?= number_format((float)$order['total_biaya'], 0, ',', '.') ?></td>
                                     <td><span class="status <?= $order['status_pekerjaan'] === 'Dibatalkan' ? 'cancelled' : '' ?>"><?= h($order['status_pekerjaan']) ?></span></td>
-                                    <td>
+                                    <?php if (!$archiveView): ?><td>
                                         <div class="actions">
                                             <a class="edit-link" href="pesanan.php?action=edit&id=<?= (int)$order['id_pesanan'] ?>">Edit</a>
-                                            <form method="post" action="pesanan.php" onsubmit="return confirm('Yakin ingin menghapus pesanan ini?');">
-                                                <input type="hidden" name="action" value="delete">
-                                                <input type="hidden" name="id_pesanan" value="<?= (int)$order['id_pesanan'] ?>">
-                                                <input type="hidden" name="csrf_token" value="<?= h($_SESSION['csrf_token']) ?>">
-                                                <button class="delete-link" type="submit">Hapus</button>
-                                            </form>
                                         </div>
-                                    </td>
+                                    </td><?php endif; ?>
                                 </tr>
                             <?php endforeach; ?>
                         <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
-                <div class="table-footer">Satu pesanan dapat mencakup beberapa layanan dan tetap terhubung dengan jadwal serta pembayaran RumahCare.</div>
+                <?php if ($archiveView): ?>
+                    <div class="table-footer archive-controls">
+                        <span>Waktu selesai/batal tercatat saat status dikonfirmasi. Pengeluaran dari arsip tidak menghapus jadwal atau pembayaran.</span>
+                        <button class="btn btn-danger" type="submit" id="deleteSelected" disabled hidden>Hapus terpilih (0)</button>
+                    </div>
+                </form>
+                <?php else: ?>
+                    <div class="table-footer">Satu pesanan dapat mencakup beberapa layanan dan tetap terhubung dengan jadwal serta pembayaran RumahCare.</div>
+                <?php endif; ?>
             </section>
+            <?php if ($archiveView): ?>
+            <script>
+                const archiveForm = document.getElementById('archiveForm');
+                const toggleSelection = document.getElementById('toggleSelection');
+                const deleteSelected = document.getElementById('deleteSelected');
+                const checks = [...archiveForm.querySelectorAll('input[name="id_pesanan[]"]')];
+                const selectAll = document.getElementById('selectAll');
+                let selectionMode = false;
+                function updateSelection() {
+                    const count = checks.filter((item) => item.checked).length;
+                    deleteSelected.textContent = `Hapus terpilih (${count})`;
+                    deleteSelected.disabled = count === 0;
+                    deleteSelected.hidden = !selectionMode;
+                    archiveForm.querySelectorAll('.selection-column').forEach((item) => item.hidden = !selectionMode);
+                    toggleSelection.textContent = selectionMode ? 'Batal pilih' : 'Pilih untuk dihapus';
+                }
+                toggleSelection.addEventListener('click', () => { selectionMode = !selectionMode; updateSelection(); });
+                checks.forEach((item) => item.addEventListener('change', updateSelection));
+                selectAll.addEventListener('change', () => { checks.forEach((item) => item.checked = selectAll.checked); updateSelection(); });
+                archiveForm.addEventListener('submit', (event) => {
+                    const count = checks.filter((item) => item.checked).length;
+                    if (!selectionMode || count === 0 || !confirm(`Keluarkan ${count} pesanan terpilih dari arsip? Jadwal dan pembayaran tetap tersimpan.`)) event.preventDefault();
+                });
+            </script>
+            <?php endif; ?>
         <?php endif; ?>
     </main>
 </div>
